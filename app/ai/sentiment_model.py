@@ -1,5 +1,5 @@
 import os
-import time  # ✅ 시간 측정용
+import time
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 
@@ -10,13 +10,21 @@ if not hf_token:
 
 # 1. 모델 로딩
 model_id = "google/gemma-2-2b-it"
+
 quant_config = BitsAndBytesConfig(
     load_in_4bit=True,
     bnb_4bit_quant_type="nf4",
     bnb_4bit_compute_dtype=torch.bfloat16,
 )
 
-tokenizer = AutoTokenizer.from_pretrained(model_id, token=hf_token)
+# 🔧 tokenizer 로드 (trust_remote_code 꼭 True)
+tokenizer = AutoTokenizer.from_pretrained(
+    model_id,
+    token=hf_token,
+    trust_remote_code=True
+)
+
+# 🔧 model 로드 (trust_remote_code 꼭 True)
 model = AutoModelForCausalLM.from_pretrained(
     model_id,
     token=hf_token,
@@ -25,6 +33,10 @@ model = AutoModelForCausalLM.from_pretrained(
     quantization_config=quant_config
 )
 
+# 🔍 모델 config 확인 로그 (선택 사항)
+print(f"✅ 모델 로드 완료: {model.config.model_type}")
+
+# 시스템 프롬프트 정의
 system_prompt = """너는 뉴스 기사 감정분석 전문가야.
 주어진 기사를 읽고 다음 형식으로 분석해줘:
 
@@ -38,8 +50,6 @@ system_prompt = """너는 뉴스 기사 감정분석 전문가야.
 
 # 2. 분석 함수
 def analyze_sentiment(content: str):
-    
-    """감정분석"""
     messages = [
         {"role": "user", "content": f"{system_prompt}\n\n분석할 기사:\n{content}"}
     ]
@@ -50,7 +60,7 @@ def analyze_sentiment(content: str):
         return_tensors="pt"
     ).to(model.device)
 
-    start_time = time.time()  # ✅ 시작 시간
+    start_time = time.time()
 
     with torch.no_grad():
         outputs = model.generate(
@@ -61,10 +71,10 @@ def analyze_sentiment(content: str):
             pad_token_id=tokenizer.eos_token_id
         )
 
-    duration = round(time.time() - start_time, 2)  # ✅ 걸린 시간 (초)
+    duration = round(time.time() - start_time, 2)
 
     result = tokenizer.decode(outputs[0][inputs.shape[-1]:], skip_special_tokens=True)
     return {
         "analysis": result,
-        "inference_time_sec": duration  # ✅ 추가된 반환값
+        "inference_time_sec": duration
     }
