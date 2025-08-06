@@ -1,0 +1,14 @@
+# FastAPI + DB
+fastapi
+uvicorn
+pydantic
+sqlalchemy
+asyncpg
+python-dotenv
+sqlmodel
+
+# HuggingFace + Quantization
+transformers
+accelerate
+bitsandbytes
+torch
