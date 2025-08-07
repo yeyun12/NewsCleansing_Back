@@ -20,6 +20,7 @@ async def analyze_article_by_id(
     request: ArticleAnalyzeRequest,
     db: AsyncSession = Depends(get_session)
 ):
+    """기사 ID로 감정 분석 수행"""
     article_id = request.article_id
 
     # 모든 테이블 클래스 순회하며 해당 ID를 가진 기사 찾기

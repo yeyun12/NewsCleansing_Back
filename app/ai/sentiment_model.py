@@ -2,6 +2,10 @@ import os
 import time
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
+from transformers.utils import logging
+
+
+logging.set_verbosity_info()
 
 # 0. 환경 변수에서 HF 토큰 로드
 hf_token = os.getenv("HUGGINGFACE_HUB_TOKEN")
@@ -44,9 +48,9 @@ system_prompt = """너는 뉴스 기사 감정분석 전문가야.
 **신뢰도**: 0-100%  
 **주요 근거**: 판단 이유를 간단히 설명  
 **기사 의도**: 어떤 목적으로 작성되었는지 분석하고 전달하려는 메세지를 간결하게 정리해줘.
+**요약**: 기사의 핵심 내용을 2-3문장으로 요약해줘.
 
-결과 보니까 요약도 포함되어 있는데 요약 부분은 필요없음.
-정확하고 객관적으로 분석해줘.
+정확하고 객관적으로 분석해줘. 내가 지시하지 않은 내용은 포함하지 마.
 """
 
 # 2. 분석 함수
