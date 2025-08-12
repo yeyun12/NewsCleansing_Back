@@ -3,7 +3,7 @@ from fastapi import FastAPI, APIRouter
 from app.db.session import create_db_and_tables, dispose_engine
 from app.api.news.router import router as news_router
 from app.api.user.router import router as user_router
-from app.ai.router import router as ai_router
+# from app.ai.router import router as ai_router
 
 
 
@@ -33,7 +33,7 @@ app = FastAPI(
 # 라우터 등록
 app.include_router(news_router, prefix="/api")
 app.include_router(user_router, prefix="/api")
-app.include_router(ai_router, prefix="/api/sentiment", tags=["Sentiment"])
+# app.include_router(ai_router, prefix="/api/sentiment", tags=["Sentiment"])
 
 @app.get("/")
 async def root():
