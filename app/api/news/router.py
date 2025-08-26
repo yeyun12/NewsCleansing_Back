@@ -309,12 +309,10 @@ async def user_field_stats(
     days: int = Query(1, ge=1, le=30),
     db: AsyncSession = Depends(get_session),
 ):
-    # ✅ 더 이상 day를 rolling으로 바꾸지 않음
-    normalized_mode = mode
+    # ✅ 더 이상 day → rolling 으로 바꾸지 말고, 그대로 서비스에 전달
     return await service.get_user_field_stats(
-        db, user_id, days=days, metric=metric, mode=normalized_mode
+        db, user_id, days=days, metric=metric, mode=mode
     )
-
 
 @router.get(
     "/user/{user_id}/hourly-activity",

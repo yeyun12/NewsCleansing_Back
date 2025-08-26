@@ -18,6 +18,23 @@ BASELINE_STRESS = 50
 
 from .models import Article, ArticleRead, UserEvent
 
+KST = "Asia/Seoul"
+
+def _to_kst(col):
+    """
+    컬럼이 UTC 기반 timestamp WITHOUT time zone으로 저장되어 있을 때,
+    KST 벽시계 시각으로 안전 변환:
+      col AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Seoul'
+    (만약 DB가 timestamptz라면 첫 'UTC' 변환은 생략 가능하지만,
+     현재 스키마에 안전하게 맞춘 형태)
+    """
+    return col.op("AT TIME ZONE")("UTC").op("AT TIME ZONE")(KST)
+
+def _now_kst():
+    # now()는 timestamptz → timezone(KST, now())는 KST 벽시계(naive) 반환
+    return func.timezone(KST, func.now())
+
+
 # ------------------------------------------------------------------------------ #
 # Config
 # ------------------------------------------------------------------------------ #
@@ -746,15 +763,22 @@ async def get_user_field_stats(
         .where(ArticleRead.user_id == int(user_id))
     )
 
-    if mode == "week":
-        seoul_opened = func.timezone(KST, ArticleRead.opened_at)
-        seoul_now = func.timezone(KST, func.now())
+    # ✅ opened_at을 KST 벽시계로 변환
+    opened_kst = _to_kst(ArticleRead.opened_at)
+    now_kst = _now_kst()
+
+    if mode == "day":
+        # 오늘 00:00 ~ 내일 00:00 (KST)
+        start = func.date_trunc("day", now_kst)
+        end = start + text("interval '1 day'")
+        base = base.where(opened_kst >= start, opened_kst < end)
+    elif mode == "week":
         base = base.where(
-            func.date_trunc("week", seoul_opened) == func.date_trunc("week", seoul_now)
+            func.date_trunc("week", opened_kst) == func.date_trunc("week", now_kst)
         )
-    else:
+    else:  # rolling
         base = base.where(
-            ArticleRead.opened_at >= (func.now() - text(f"interval '{int(days)} days'"))
+            opened_kst >= (now_kst - text(f"interval '{int(days)} day'"))
         )
 
     q = base.group_by(label_expr).order_by(desc("value"))
@@ -1070,48 +1094,28 @@ async def record_mood_event(
 
 
 
-async def get_user_mood_snapshot(
-    session: AsyncSession,
-    user_id: str,
-    *,
-    days: int = 7,
-) -> Dict[str, Any]:
-    """
-    최근 7일(KST 기준) mood/stress_delta 이벤트를 집계해서
-    - 오늘 점수 (baseline + delta 합)
-    - 최근 7일 [{date, score}]
-    - 주간 패턴 [{dow(0=일), avg, cnt}]
-    반환
-    """
-    # 7일 고정 (요청에 따라 param이 와도 7로 클램프)
+async def get_user_mood_snapshot(session: AsyncSession, user_id: str, *, days: int = 7) -> Dict[str, Any]:
     days = 7
 
-    # KST로 타임존 고정
-    seoul_now = func.timezone(KST, func.now())
-    seoul_ts = func.timezone(KST, UserEvent.ts)
+    # ✅ KST now / event ts(KST)
+    seoul_now = _now_kst()
+    seoul_ts = _to_kst(UserEvent.ts)
 
-    # KST "YYYY-MM-DD"
     day_str = func.to_char(func.date_trunc("day", seoul_ts), "YYYY-MM-DD").label("day")
 
-    # ✅ JSON 'delta' 안전 추출 + 실수 합산 (정규식으로 숫자만 캐스팅)
     delta_text = func.jsonb_extract_path_text(UserEvent.meta.cast(JSONB), 'delta')
     sum_delta = func.coalesce(
         func.sum(
             case(
-                (
-                    delta_text.op('~')('^-?[0-9]+(\\.[0-9]+)?$'),
-                    cast(delta_text, Numeric()),
-                ),
+                (delta_text.op('~')('^-?[0-9]+(\\.[0-9]+)?$'), cast(delta_text, Numeric())),
                 else_=0.0,
             )
         ),
         0.0,
     ).label("sum_delta")
 
-    # 최근 7일(오늘 포함) 윈도우 시작 (KST 기준)
     window_start = seoul_now - text(f"interval '{int(days)} day'")
 
-    # mood + stress_delta 둘 다 집계
     q = (
         select(day_str, sum_delta)
         .where(
@@ -1123,51 +1127,34 @@ async def get_user_mood_snapshot(
         .order_by(day_str.asc())
     )
     rows = (await session.execute(q)).all()
-    # 합계는 실수로 보관
     m = {r.day: float(r.sum_delta or 0.0) for r in rows}
 
-    # 오늘(Seoul) 날짜 문자열
     today_str = (
         await session.execute(
-            select(
-                func.to_char(
-                    func.date_trunc("day", seoul_now), "YYYY-MM-DD"
-                )
-            )
+            select(func.to_char(func.date_trunc("day", seoul_now), "YYYY-MM-DD"))
         )
     ).scalar_one()
 
-    # 최근 7일 리스트(과거→오늘). 날짜는 KST 기준 고정 문자열로 리턴
     today_date = datetime.strptime(today_str, "%Y-%m-%d").date()
-    days_list: List[Dict[str, Any]] = []
+    days_list = []
     for i in range(days - 1, -1, -1):
         d = (today_date - timedelta(days=i)).isoformat()
-        delta_sum = m.get(d, 0.0)
-        score = BASELINE_STRESS + delta_sum
-        # 원래 int(score)였다면 아래를 int(score)로 바꿔도 됨
+        score = BASELINE_STRESS + m.get(d, 0.0)
         days_list.append({"date": d, "score": int(round(score))})
 
     today_score = days_list[-1]["score"] if days_list else BASELINE_STRESS
 
-    # 라벨/이모지 (프론트와 동일 규칙)
     s = today_score
-    if s <= 20:
-        emoji, word = "😌", "매우 안정"
-    elif s <= 40:
-        emoji, word = "😊", "안정"
-    elif s <= 60:
-        emoji, word = "🙂", "평온"
-    elif s <= 80:
-        emoji, word = "😟", "긴장"
-    else:
-        emoji, word = "😣", "불안"
+    if s <= 20:   emoji, word = "😌", "매우 안정"
+    elif s <= 40: emoji, word = "😊", "안정"
+    elif s <= 60: emoji, word = "🙂", "평온"
+    elif s <= 80: emoji, word = "😟", "긴장"
+    else:         emoji, word = "😣", "불안"
 
-    # 주간 패턴(0=일 ~ 6=토) — 최근 7일 기준으로 평균
     week_bins = [{"dow": i, "cnt": 0, "sum": 0, "avg": None} for i in range(7)]
     for d in days_list:
         dt = datetime.strptime(d["date"], "%Y-%m-%d").date()
-        # Python weekday(): Mon=0..Sun=6 → 프로젝트는 Sun=0..Sat=6
-        dow = (dt.weekday() + 1) % 7  # Mon(0)→1 ... Sun(6)→0
+        dow = (dt.weekday() + 1) % 7
         week_bins[dow]["cnt"] += 1
         week_bins[dow]["sum"] += d["score"]
     for b in week_bins:
