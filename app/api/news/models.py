@@ -1,48 +1,36 @@
-from sqlmodel import SQLModel, Field
-from typing import Optional
+# # app/api/news/models.py
+from typing import Optional, Dict
 from datetime import datetime
+from sqlmodel import SQLModel, Field, Column, JSON
 
-class NewsBase(SQLModel):
-    """뉴스 기본 스키마"""
-    title: str = Field(index=True, min_length=1, max_length=200)
-    content: str = Field(min_length=1, max_length=5000)
-    author: str = Field(min_length=1, max_length=100)
-    category: Optional[str] = Field(default=None, max_length=50)
-    source_url: Optional[str] = Field(default=None, max_length=500)
+class Article(SQLModel, table=True):
+    __tablename__ = "original_article"
+    id: str = Field(primary_key=True)
+    url: Optional[str] = None
+    category: Optional[str] = None
+    published_at: Optional[datetime] = None
+    title: Optional[str] = None
+    content: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+    reporter: Optional[str] = None
+    press: Optional[str] = None
+    keywords: Optional[str] = None
+    scraped_at: Optional[datetime] = None
 
-class News(NewsBase, table=True):
-    """뉴스 데이터베이스 모델"""
-    __tablename__ = "news"
-    
+class ArticleRead(SQLModel, table=True):
+    __tablename__ = "article_reads"
     id: Optional[int] = Field(default=None, primary_key=True)
-    created_at: datetime = Field(default_factory=datetime.now)
-    updated_at: Optional[datetime] = None
-    published_at: Optional[datetime] = None
-    is_active: bool = Field(default=True)
-    is_published: bool = Field(default=False)
+    user_id: int
+    article_id: str
+    opened_at: Optional[datetime] = None
+    closed_at: Optional[datetime] = None
+    dwell_seconds: Optional[int] = 0
 
-class NewsCreate(NewsBase):
-    """뉴스 생성 요청 스키마"""
-    pass
-
-class NewsUpdate(SQLModel):
-    """뉴스 업데이트 요청 스키마"""
-    title: Optional[str] = Field(default=None, min_length=1, max_length=200)
-    content: Optional[str] = Field(default=None, min_length=1, max_length=5000)
-    author: Optional[str] = Field(default=None, min_length=1, max_length=100)
-    category: Optional[str] = Field(default=None, max_length=50)
-    source_url: Optional[str] = Field(default=None, max_length=500)
-    is_active: Optional[bool] = None
-    is_published: Optional[bool] = None
-
-class NewsResponse(NewsBase):
-    """뉴스 응답 스키마"""
-    id: int
-    created_at: datetime
-    updated_at: Optional[datetime] = None
-    published_at: Optional[datetime] = None
-    is_active: bool
-    is_published: bool
-    
-    class Config:
-        from_attributes = True
+class UserEvent(SQLModel, table=True):
+    __tablename__ = "user_events"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int
+    event_type: str
+    article_id: Optional[str] = None
+    ts: Optional[datetime] = None
+    meta: Optional[Dict] = Field(default=None, sa_column=Column(JSON))

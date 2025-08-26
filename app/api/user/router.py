@@ -1,65 +1,142 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from __future__ import annotations
+from typing import Optional, List
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Body
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List, Optional
+from fastapi import HTTPException
+import httpx
 from app.db.session import get_session
-from .service import UserService, LogService
+from .service import UserService
+from .schemas import (
+    UserCreate,
+    UserResponse,
+    LoginBody,
+    SessionStartBody,
+    SessionEndBody,
+    SessionStartResponse,
+    SessionEndResponse,
+    UsageHourlyResponse,
+)
+import os
+from fastapi import APIRouter
+import requests
 
-router = APIRouter(prefix="/user", tags=["user"])
+router = APIRouter()
+router = APIRouter(prefix="/user", tags=["users"])
+EXTERNAL_API_BASE_URL = os.getenv("EXTERNAL_API_BASE_URL")
 
-@router.post("/", response_model=dict, status_code=status.HTTP_201_CREATED)
+# ---------------- Users ----------------
+@router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def create_user(
-    name: str,
-    email: str,
-    password: str,
-    db: AsyncSession = Depends(get_session)
+    name: str = Query(...),
+    email: str = Query(...),
+    password: str = Query(...),
+    db: AsyncSession = Depends(get_session),
 ):
-    """새로운 유저 생성"""
-    service = UserService(db)
-    user = await service.create_user(name, email, password)
-    return {"id": user.id, "email": user.email}
+    svc = UserService(db)
+    u = await svc.create_user(name, email, password)
+    return UserResponse(id=u.id, name=u.name, email=u.email, created_at=u.created_at)
 
-@router.get("/", response_model=List[dict])
-async def get_users(
-    db: AsyncSession = Depends(get_session)
-):
-    """유저 목록 조회"""
-    service = UserService(db)
-    users = await service.get_users()
-    return [{"id": u.id, "email": u.email} for u in users]
+@router.get("/", response_model=List[UserResponse])
+async def get_users(db: AsyncSession = Depends(get_session)):
+    svc = UserService(db)
+    rows = await svc.get_users()
+    return [UserResponse(id=u.id, name=u.name, email=u.email, created_at=u.created_at) for u in rows]
 
-@router.put("/{user_id}", response_model=dict)
+@router.put("/{user_id}", response_model=UserResponse)
 async def update_user(
     user_id: int,
-    name: str,
-    email: str,
-    password: Optional[str] = None,
-    db: AsyncSession = Depends(get_session)
+    name: str = Query(...),
+    email: str = Query(...),
+    password: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_session),
 ):
-    """유저 업데이트"""
-    service = UserService(db)
-    user = await service.update_user(user_id, name, email, password)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return {"id": user.id, "email": user.email}
+    svc = UserService(db)
+    u = await svc.update_user(user_id, name, email, password)
+    if not u:
+        raise HTTPException(404, "User not found")
+    return UserResponse(id=u.id, name=u.name, email=u.email, created_at=u.created_at)
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_user(user_id: int, db: AsyncSession = Depends(get_session)):
-    """유저 삭제"""
-    service = UserService(db)
-    success = await service.delete_user(user_id)
-    if not success:
-        raise HTTPException(status_code=404, detail="User not found")
+    svc = UserService(db)
+    ok = await svc.delete_user(user_id)
+    if not ok:
+        raise HTTPException(404, "User not found")
 
-@router.post("/log", response_model=dict, status_code=status.HTTP_201_CREATED)
-async def create_log(user_id: int, action: str, db: AsyncSession = Depends(get_session)):
-    """유저 로그 생성"""
-    service = LogService(db)
-    log = await service.create_log(user_id, action)
-    return {"id": log.id, "user_id": log.user_id, "action": log.action, "timestamp": log.timestamp}
+# ---------------- Auth ----------------
+@router.post("/login", response_model=UserResponse)
+async def login(
+    email: Optional[str] = Query(None),
+    password: Optional[str] = Query(None),
+    body: Optional[LoginBody] = Body(None),
+    db: AsyncSession = Depends(get_session),
+):
+    em = email if email is not None else (body.email if body else None)
+    pw = password if password is not None else (body.password if body else None)
+    if not em or not pw:
+        raise HTTPException(status_code=400, detail="email and password are required")
 
-@router.get("/log", response_model=List[dict])
-async def get_logs(user_id: Optional[int] = None, db: AsyncSession = Depends(get_session)):
-    """유저 로그 조회"""
-    service = LogService(db)
-    logs = await service.get_logs(user_id)
-    return [{"id": l.id, "user_id": l.user_id, "action": l.action, "timestamp": l.timestamp} for l in logs]
+    svc = UserService(db)
+    user = await svc.login(em, pw)
+    if not user:
+        raise HTTPException(status_code=401, detail="잘못된 이메일 또는 비밀번호입니다.")
+    return UserResponse(id=user.id, name=user.name, email=user.email, created_at=user.created_at)
+
+@router.post("", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def signup(
+    name: str = Query(...),
+    email: str = Query(...),
+    password: str = Query(...),
+    db: AsyncSession = Depends(get_session),
+):
+    svc = UserService(db)
+    u = await svc.create_user(name, email, password)
+    return UserResponse(id=u.id, name=u.name, email=u.email, created_at=u.created_at)
+
+# ---------------- Sessions ----------------
+@router.post("/session/start", response_model=SessionStartResponse, status_code=status.HTTP_201_CREATED)
+async def session_start(
+    user_id: Optional[int] = Query(None),
+    body: Optional[SessionStartBody] = Body(None),
+    db: AsyncSession = Depends(get_session),
+):
+    uid = user_id if user_id is not None else (body.user_id if body else None)
+    if uid is None:
+        raise HTTPException(400, detail="user_id is required")
+
+    svc = UserService(db)
+    sid = await svc.start_session(uid)
+    return SessionStartResponse(session_id=sid)
+
+@router.post("/session/end", response_model=SessionEndResponse)
+async def session_end(
+    user_id: Optional[int] = Query(None),
+    session_id: Optional[int] = Query(None),
+    body: Optional[SessionEndBody] = Body(None),
+    db: AsyncSession = Depends(get_session),
+):
+    uid = user_id if user_id is not None else (body.user_id if body else None)
+    sid = session_id if session_id is not None else (body.session_id if body else None)
+    if uid is None or sid is None:
+        raise HTTPException(400, detail="user_id and session_id are required")
+
+    svc = UserService(db)
+    seconds = await svc.end_session(session_id=sid, user_id=uid)
+    if seconds < 0:
+        raise HTTPException(404, detail="session not found")
+    return SessionEndResponse(ok=True, seconds=seconds)
+
+# ---------------- Usage (hourly) ----------------
+@router.get("/sessions/hours", response_model=UsageHourlyResponse)
+async def session_hours(
+    user_id: int = Query(...),
+    mode: str = Query("day"),        # "day" | "week" | "rolling"
+    days: int = Query(1, ge=1, le=31),
+    db: AsyncSession = Depends(get_session),
+):
+    svc = UserService(db)
+    bins = await svc.usage_hourly(user_id, mode=mode, days=days)
+    return UsageHourlyResponse(labels=list(range(24)), bins=bins)
+
+
+
