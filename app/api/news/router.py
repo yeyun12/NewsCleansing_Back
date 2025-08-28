@@ -204,11 +204,11 @@ async def get_news_complete(
 # ------------------------------
 # 번들/세션/통계
 # ------------------------------
-@router.get("/{article_id}/bundle", summary="뉴스 번들 조회", description="특정 뉴스 기사의 번들(관련 기사) 정보를 조회합니다.")
-async def get_bundle(
-    article_id: str, user_id: str, db: AsyncSession = Depends(get_session)
-):
-    return await service.bundle_article(db, article_id, user_id)
+# @router.get("/{article_id}/bundle", summary="뉴스 번들 조회", description="특정 뉴스 기사의 번들(관련 기사) 정보를 조회합니다.")
+# async def get_bundle(
+#     article_id: str, user_id: str, db: AsyncSession = Depends(get_session)
+# ):
+#     return await service.bundle_article(db, article_id, user_id)
 
 
 @router.post(
@@ -287,14 +287,14 @@ async def user_reads_today(
     )
 
 
-@router.get("/user/{user_id}/reads/week", summary="사용자 이번 주 읽기 히스토리")
-async def user_reads_week(
-    user_id: str,
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
-    db: AsyncSession = Depends(get_session),
-):
-    return await service.list_user_reads_week(db, user_id, limit=limit, offset=offset)
+# @router.get("/user/{user_id}/reads/week", summary="사용자 이번 주 읽기 히스토리")
+# async def user_reads_week(
+#     user_id: str,
+#     limit: int = Query(50, ge=1, le=200),
+#     offset: int = Query(0, ge=0),
+#     db: AsyncSession = Depends(get_session),
+# ):
+#     return await service.list_user_reads_week(db, user_id, limit=limit, offset=offset)
 
 
 @router.get(
